@@ -1,0 +1,10 @@
+{
+  "appId": "io.github.xvshisan.auraspace",
+  "appName": "静界 AuraSpace",
+  "webDir": "dist-web",
+  "backgroundColor": "#070b18",
+  "android": {
+    "backgroundColor": "#070b18",
+    "allowMixedContent": false
+  }
+}

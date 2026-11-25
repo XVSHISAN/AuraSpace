@@ -1,0 +1,19 @@
+{
+  "name": "auraspace",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:standalone": "node scripts/build.mjs --standalone",
+    "test": "node --test tests/smoke.test.mjs",
+    "test:e2e": "node tests/e2e.test.mjs",
+    "build:exe": "node scripts/build.mjs --standalone && dotnet publish desktop/AuraSpace.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o release/win-x64",
+    "prepare:android": "node scripts/prepare-android.mjs"
+  },
+  "devDependencies": {
+    "@capacitor/android": "6.2.0",
+    "@capacitor/cli": "6.2.0",
+    "@capacitor/core": "6.2.0"
+  }
+}

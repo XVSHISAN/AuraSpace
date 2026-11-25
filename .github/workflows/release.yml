@@ -1,0 +1,166 @@
+name: Multi-Platform Build & Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: Build & QA Gates (Toy + Unit Tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Pillow for preflight image checks
+        run: python -m pip install --no-cache-dir pillow
+
+      - name: Build Bilibili Toy & Standalone bundles
+        run: |
+          node scripts/build.mjs
+          node scripts/build.mjs --standalone
+
+      - name: Run smoke & compliance tests
+        run: node --test tests/smoke.test.mjs
+
+      - name: Run Bilibili Toy official preflight (toy_doctor)
+        run: |
+          python scripts/toy_doctor.py dist --poster release/poster.png --slug auraspace --json
+          python scripts/toy_doctor.py release/auraspace-toy.zip --poster release/poster.png --slug auraspace --json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: auraspace-bilibili-toy
+          path: release/auraspace-toy.zip
+
+  build-windows-exe:
+    name: Build Windows EXE (.NET 8 WebView2)
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build standalone web bundle
+        run: node scripts/build.mjs --standalone
+
+      - name: Publish single-file Windows x64 executable
+        run: |
+          dotnet publish desktop/AuraSpace.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o out-win
+          Copy-Item out-win/AuraSpace.exe AuraSpace-Windows-x64.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AuraSpace-Windows-x64
+          path: AuraSpace-Windows-x64.exe
+
+  build-android-apk:
+    name: Build Android APK (Capacitor 6)
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Android icon dependency
+        run: python -m pip install --no-cache-dir pillow
+
+      - name: Install Capacitor & prepare Android project
+        run: |
+          npm install --no-audit --no-fund
+          node scripts/build.mjs --standalone
+          node scripts/prepare-android.mjs
+
+      - name: Build release APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Align and sign APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 --decode > release.keystore
+          else
+            KS_PASS="auraspace123"
+            KEY_PASS="auraspace123"
+            KS_ALIAS="auraspace"
+            keytool -genkeypair -v -keystore release.keystore -alias "$KS_ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$KS_PASS" -keypass "$KEY_PASS" \
+              -dname "CN=AuraSpace, O=XVSHISAN, C=CN"
+          fi
+          BUILD_TOOLS=$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)
+          UNSIGNED_APK=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS/zipalign" -p -f 4 "$UNSIGNED_APK" aligned.apk
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner" sign \
+            --ks release.keystore \
+            --ks-pass "pass:$KS_PASS" \
+            --key-pass "pass:$KEY_PASS" \
+            --ks-key-alias "$KS_ALIAS" \
+            --out AuraSpace-Android.apk \
+            aligned.apk
+          "$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner" verify AuraSpace-Android.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AuraSpace-Android-APK
+          path: AuraSpace-Android.apk
+
+  publish-release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [verify, build-windows-exe, build-android-apk]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create Release & Attach Binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            release-assets/AuraSpace-Windows-x64.exe
+            release-assets/AuraSpace-Android.apk
+            release-assets/auraspace-toy.zip

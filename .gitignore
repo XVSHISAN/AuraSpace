@@ -1,0 +1,17 @@
+# Dependencies & OS
+node_modules/
+.DS_Store
+Thumbs.db
+
+# Generated web bundles & native build outputs
+dist/
+dist-web/
+android/
+desktop/bin/
+desktop/obj/
+desktop/web-bundle.zip
+release/win-x64/
+release/*.exe
+release/*.apk
+*.keystore
+*.jks
